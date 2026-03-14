@@ -1,0 +1,153 @@
+import React, { useState, useEffect } from "react";
+import "./App.css";
+
+function App() {
+  const [products, setProducts] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [logs, setLogs] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [newProduct, setNewProduct] = useState({ name: "", sku: "", quantity: 0, reorder_level: 10, location: "" });
+
+  const fetchProducts = () => {
+    fetch("http://localhost:3000/products")
+      .then((res) => res.json())
+      .then((data) => setProducts(data))
+      .catch((err) => addLog("SYNC ERROR: Database offline."));
+  };
+
+  useEffect(() => {
+    fetchProducts();
+    addLog("System Online: Validating Data Integrity.");
+  }, []);
+
+  const addLog = (message) => {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setLogs((prev) => [`[${time}] ${message}`, ...prev].slice(0, 8));
+  };
+
+  const handleAddProduct = (e) => {
+    e.preventDefault();
+    // VALIDATION: Duplicate SKU check
+    if (products.some(p => p.sku.toUpperCase() === newProduct.sku.toUpperCase())) {
+      alert(`SKU ${newProduct.sku} already exists.`);
+      return;
+    }
+    fetch("http://localhost:3000/products", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newProduct),
+    }).then(() => {
+      fetchProducts();
+      addLog(`NEW ASSET: ${newProduct.name} registered.`);
+      setShowModal(false);
+      setNewProduct({ name: "", sku: "", quantity: 0, reorder_level: 10, location: "" });
+    });
+  };
+
+  const handleUpdate = (id, currentQty, name, change) => {
+    const newQty = currentQty + change;
+    // VALIDATION: Prevent negative inventory
+    if (newQty < 0) {
+      addLog(`REJECTED: ${name} is out of stock.`);
+      return;
+    }
+    fetch(`http://localhost:3000/products/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quantity: newQty }),
+    }).then(() => {
+      fetchProducts();
+      addLog(`${change > 0 ? "RECV" : "DELV"}: ${name} (${newQty} units)`);
+    });
+  };
+
+  const handleDelete = (id, name) => {
+    if (window.confirm(`Permanently remove ${name} from registry?`)) {
+      fetch(`http://localhost:3000/products/${id}`, { method: "DELETE" }).then(() => {
+        fetchProducts();
+        addLog(`DELETED: ${name} removed.`);
+      });
+    }
+  };
+
+  return (
+    <div className="app-container">
+      <div className="status-bar">
+        <span>System: <b className="status-online">CONNECTED</b></span>
+        <button className="add-btn" onClick={() => setShowModal(true)}>+ ADD ASSET</button>
+      </div>
+
+      <header className="header-wrapper">
+        <h1>Inventory Control</h1>
+      </header>
+
+      <div className="summary-section">
+        <div className="stat-card">
+          <label>Total Items</label>
+          <div className="stat-value glow-cyan">{products.length}</div>
+        </div>
+        <div className="stat-card">
+          <label>Total Volume</label>
+          <div className="stat-value glow-cyan">{products.reduce((a, b) => a + b.quantity, 0)}</div>
+        </div>
+      </div>
+
+      <input type="text" placeholder="Search..." className="search-bar" onChange={(e) => setSearchTerm(e.target.value)} />
+
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr><th>Product</th><th>SKU</th><th>Quantity</th><th>Location</th><th>Management</th></tr>
+          </thead>
+          <tbody>
+            {products.filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase())).map(product => (
+              <tr key={product.id} className="table-row">
+                <td className="product-name">{product.name}</td>
+                <td className="sku-cell">{product.sku}</td>
+                <td className={product.quantity < product.reorder_level ? "low-stock" : "normal-stock"}>
+                  {product.quantity} {product.quantity < product.reorder_level && <span className="alert-tag">LOW</span>}
+                </td>
+                <td>{product.location}</td>
+                <td className="management-cells">
+                  <button className="btn-receive" onClick={() => handleUpdate(product.id, product.quantity, product.name, 1)}>+</button>
+                  <button 
+                    className={`btn-deliver ${product.quantity === 0 ? "disabled" : ""}`} 
+                    onClick={() => handleUpdate(product.id, product.quantity, product.name, -1)}
+                  >−</button>
+                  <button className="btn-delete" onClick={() => handleDelete(product.id, product.name)}>✕</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {showModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h3>Add New Asset</h3>
+            <form onSubmit={handleAddProduct}>
+              <input type="text" placeholder="Name" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
+              <input type="text" placeholder="SKU Code" required value={newProduct.sku} onChange={e => setNewProduct({...newProduct, sku: e.target.value})} />
+              <input type="number" placeholder="Initial Qty" required value={newProduct.quantity} onChange={e => setNewProduct({...newProduct, quantity: parseInt(e.target.value)})} />
+              <input type="text" placeholder="Location" required value={newProduct.location} onChange={e => setNewProduct({...newProduct, location: e.target.value})} />
+              <div className="modal-actions">
+                <button type="submit" className="btn-save">Confirm</button>
+                <button type="button" className="btn-cancel" onClick={() => setShowModal(false)}>Close</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="log-container">
+        <div className="log-header">Activity Log</div>
+        <div className="log-body">
+          {logs.map((log, i) => <div key={i} className="log-entry">{log}</div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
